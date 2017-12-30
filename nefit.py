@@ -14,10 +14,12 @@ import math
 #import asyncio
 import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.event import track_time_interval
 
-from homeassistant.components.climate import ( ClimateDevice, PLATFORM_SCHEMA,
-    STATE_AUTO, STATE_HEAT, STATE_IDLE,
-    SUPPORT_TARGET_TEMPERATURE, SUPPORT_OPERATION_MODE )
+from homeassistant.components.climate import (ClimateDevice,
+                                              STATE_AUTO, PLATFORM_SCHEMA,
+                                              SUPPORT_TARGET_TEMPERATURE, 
+                                              SUPPORT_OPERATION_MODE)
 from homeassistant.const import TEMP_CELSIUS, ATTR_TEMPERATURE
 from homeassistant.const import STATE_UNKNOWN, EVENT_HOMEASSISTANT_STOP
 
@@ -32,7 +34,6 @@ CONF_SERIAL = "serial"
 CONF_ACCESSKEY = "accesskey"
 CONF_PASSWORD = "password"
 
-STATE_HOTWATER = "hot water"
 STATE_MANUAL = "manual"
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
@@ -80,7 +81,10 @@ class NefitThermostat(ClimateDevice):
                              password=self._password)
         self._client.connect()
 
-
+    @property
+    def supported_features(self):
+        """Return the list of supported features."""
+        return SUPPORT_FLAGS
 
     @property
     def name(self):
@@ -117,31 +121,54 @@ class NefitThermostat(ClimateDevice):
 
             self._attributes["boiler_indicator"] = self._data.get("boiler indicator")
             self._attributes["control"] = self._data.get("control")
+        except:
+            errors.append('get_status')
 
-
+        try:
             r = self._client.get_year_total()
             self._attributes["year_total"] = r.get("value")
             self._attributes["year_total_unit_of_measure"] = r.get("unitOfMeasure")
+        except:
+            errors.append('get_year_total')
 
+        try:
             r = self._client.get("/ecus/rrc/userprogram/activeprogram")
             self._attributes["active_program"] = r.get("value")
+        except:
+            errors.append('active_program')
 
+        try:
             r = self._client.get("/ecus/rrc/dayassunday/day10/active")
             self._attributes["today_as_sunday"] = (r.get("value") == "on")
+        except:
+            errors.append('today_as_sunday')
 
+        try:
             r = self._client.get("/ecus/rrc/dayassunday/day11/active")
             self._attributes["tomorrow_as_sunday"] = (r.get("value") == "on")
+        except:
+            errors.append('tomorrow_as_sunday')
 
+        try:
             r = self._client.get("/system/appliance/systemPressure")
             self._attributes["system_pressure"] = r.get("value")
+        except:
+            errors.append('system_pressure')
 
+        try:
             r = self._client.get("/heatingCircuits/hc1/actualSupplyTemperature")
             self._attributes["supply_temp"] = r.get("value")
+        except:
+            errors.append('supply_temp')
 
+        try:
             r = self._client.get("/system/sensors/temperatures/outdoor_t1")
             self._attributes["outside_temp"] = r.get("value")
         except:
-            _LOGGER.warning('Nefit api returned invalid data')
+            errors.append('outside_temp')
+
+        if len(errors) > 0:
+            _LOGGER.warning('Nefit api returned invalid data for: {}'.format(','.join(errors)))
 
     @property
     def current_temperature(self):
@@ -152,13 +179,10 @@ class NefitThermostat(ClimateDevice):
 
     @property
     def current_operation(self):
-        state = self._data.get("boiler indicator")
-        if state == 'central heating':
-            return STATE_HEAT
-        elif state == 'hot water':
-            return STATE_HOTWATER
-        elif state == 'off':
-            return STATE_IDLE
+        if self._data.get('user mode') == "manual":
+            return STATE_MANUAL
+        elif self._data.get('user mode') == "clock":
+            return STATE_AUTO
         else:
             return None
 
@@ -205,11 +229,6 @@ class NefitThermostat(ClimateDevice):
         """Return the device specific state attributes."""
 
         return self._attributes
-
-    @property
-    def supported_features(self):
-        """Return the list of supported features."""
-        return SUPPORT_FLAGS
 
     def _shutdown(self, event):
         _LOGGER.debug("shutdown")
